@@ -336,6 +336,109 @@ These endpoints allow teachers and admins to analyze quiz performance.
 
 ---
 
+## MongoDB document structure — quiz subsystem 🗄️
+
+**Authoritative references:** `AttemptRepository`, `SubmissionRepository`, `QuestionBankRepository`, `QuizRepository`, `UserQuizMetricsRepository`, `backend/src/modules/quizzes/interfaces/grading.ts`, `QuestionValidator.ts`, `QuizValidator.ts`.
+
+Below are the main collections used by the quiz subsystem, the important fields, example document snippets, and notable indexes.
+
+### `quizzes` — Quiz items (QuizItem)
+
+- **Purpose:** Stores quiz item metadata & settings (attached to course items).
+- **Key fields:** `_id`, `name`, `description`, `type`, `details` (IQuizDetails — `questionBankRefs`, `passThreshold`, `maxAttempts`, `quizType`, `releaseTime`, `questionVisibility`, `deadline?`, `approximateTimeToComplete`, `allowPartialGrading`, `allowHint`, `showCorrectAnswersAfterSubmission`, `showExplanationAfterSubmission`, `showScoreAfterSubmission`, `allowSkip`), `isOptional`, `isHidden`, `isDeleted`, `deletedAt`.
+- **Notes:** `details.questionBankRefs` contains objects `{ bankId, count, difficulty?, tags?, type? }` (see `IQuestionBankRef` in `shared/interfaces/models.ts`).
+
+Example (abridged):
+
+```
+{ _id: "60d...85", name: "Algebra Quiz", type: "QUIZ", details: { questionBankRefs: [{ bankId: "60d...9a", count: 5 }], passThreshold: 0.7, maxAttempts: 3, quizType: "DEADLINE", releaseTime: "2024-06-18T12:00:00Z" }, isDeleted: false }
+```
+
+---
+
+### `questionBanks` — Banks of question IDs
+
+- **Purpose:** Group of questions used to compose quizzes.
+- **Key fields:** `_id`, `title`, `description`, `courseId`, `courseVersionId`, `questions` (array of question IDs/ObjectIds), `tags`, `createdAt`, `updatedAt`, `isDeleted`, `deletedAt`.
+- **Indexes:** `questions_1`, `courseVersionId_1` (created in `QuestionBankRepository.ts`).
+- **Notes:** `getById` filters out banks with `isDeleted: true` and filters out soft-deleted questions when returning results.
+
+Example:
+
+```
+{ _id: "60d...b2", title: "Algebra Basics", courseVersionId: "60d...c1", questions: ["60d...87","60d...88"], createdAt: "2024-06-01T..." }
+```
+
+---
+
+### `questions` — Question documents
+
+- **Purpose:** Actual question definitions and solutions used by banks and attempts.
+- **Key fields:** `_id`, `text`, `type`, `isParameterized`, `parameters?`, `hint?`, `timeLimitSeconds`, `points`, `priority`, `solution` fields (type-specific: `correctLotItem`, `incorrectLotItems`, `correctLotItems`, `ordering`, `decimalPrecision`, `upperLimit`, `lowerLimit`, `value`, `expression`, `solutionText`), counters: `skipCount`, `attemptCount`, `attemptedByUsersCount`, and soft-delete metadata `isDeleted`, `deletedAt`.
+- **Validators & shapes:** `QuestionBody` / `QuestionResponse` (see `QuestionValidator.ts`).
+
+Example:
+
+```
+{ _id: "60d...87", text: "What is 2+2?", type: "NUMERIC_ANSWER_TYPE", points: 5, timeLimitSeconds: 30, solution: { value: 4, decimalPrecision: 0, lowerLimit: 0, upperLimit: 10 } }
+```
+
+---
+
+### `quiz_attempts` — In-progress and completed attempts
+
+- **Purpose:** Stores every attempt created when a student starts a quiz (answers can be saved multiple times before submit).
+- **Key fields:** `_id`, `quizId`, `userId`, `questionDetails` (array of `{ questionId, parameterMap? }`), `answers` (array of `IQuestionAnswer` — `{ questionId, questionType, answer }`), `isSkipped?`, `createdAt`, `updatedAt`.
+- **Indexes:** `quizId_1_userId_1` and `questionDetails_questionId_1` (created in `AttemptRepository.ts`).
+- **Notes:** `getAttemptsByQuizId` pipeline joins `questions` and `users` to produce export-friendly views.
+
+Example:
+
+```
+{ _id: "60d...90", quizId: "60d...85", userId: "60d...aa", questionDetails: [{ questionId: "60d...87", parameterMap: { x: 2 } }], answers: [{ questionId: "60d...87", questionType: "NUMERIC_ANSWER_TYPE", answer: { value: 4 } }], createdAt: "2024-06-18T..." }
+```
+
+---
+
+### `quiz_submission_results` — Final submissions with grading
+
+- **Purpose:** Finalized submission records which include grading results and submission timestamps.
+- **Key fields:** `_id`, `quizId`, `userId`, `attemptId`, `submittedAt`, `gradingResult` (`totalScore`, `totalMaxScore`, `overallFeedback`, `gradingStatus`, `gradedAt`, `gradedBy`).
+- **Indexes:** `quizId_1_userId_1_attemptId_1`, `quizId_1_gradingStatus_1_submittedAt_-1` (created in `SubmissionRepository.ts`).
+- **Notes:** Used to compute analytics (average score, pass rates) and page teacher-facing submissions with text search on user names/emails in aggregation pipeline.
+
+Example:
+
+```
+{ _id: "60d...f0", quizId: "60d...85", userId: "60d...aa", attemptId: "60d...90", submittedAt: "2024-06-18T12:45:00Z", gradingResult: { totalScore: 8.5, totalMaxScore: 10, gradingStatus: "PASSED" } }
+```
+
+---
+
+### `user_quiz_metrics` — Per-user, per-quiz aggregated metrics
+
+- **Purpose:** Tracks user progress for a quiz (remaining attempts, latest attempt/submission references, skip counts, attempts history).
+- **Key fields:** `_id`, `quizId`, `userId`, `latestAttemptStatus` (`ATTEMPTED|SUBMITTED|SKIPPED`), `latestAttemptId`, `latestSubmissionResultId`, `remainingAttempts`, `skipCount`, `attempts` (array of `{ attemptId, submissionResultId? }`).
+- **Repo helpers:** `findWithMissingSubmissionIds`, `bulkUpdateMetrics` (see `UserQuizMetricsRepository.ts`).
+
+Example:
+
+```
+{ _id: "60d...aa", quizId: "60d...85", userId: "60d...aa", latestAttemptStatus: "SUBMITTED", remainingAttempts: 0, attempts: [{ attemptId: "60d...90", submissionResultId: "60d...f0" }] }
+```
+
+---
+
+### Important operational notes ⚠️
+
+- IDs may be stored as either **ObjectId** or **string** in some places; repositories normalize queries to accept both (see `AttemptRepository.getById`, `SubmissionRepository.get`, `UserQuizMetricsRepository.get`).
+- Soft deletes: question banks and questions are soft-deleted (`isDeleted` + `deletedAt`) and queries typically filter these out.
+- Indexes in repositories are optimized for teacher-facing queries (quiz+user lookups, grading status, per-question analytics).
+
+> Tip: When adding new queries or reports, prefer using repository helpers (they already implement ObjectId/string normalization and aggregation pipelines) to avoid subtle bugs.
+
+---
+
 If you'd like, I can:
 
 - Export this doc to a CSV mapping endpoint → method → validator class → frontend hook location, or
