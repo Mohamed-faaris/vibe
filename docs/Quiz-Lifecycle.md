@@ -262,6 +262,45 @@ Type references (for implementers):
 - `QuestionType` values: `SELECT_ONE_IN_LOT`, `SELECT_MANY_IN_LOT`, `ORDER_THE_LOTS`, `NUMERIC_ANSWER_TYPE`, `DESCRIPTIVE`.
 - `Priority` values: `LOW`, `MEDIUM`, `HIGH`.
 
+TypeScript outline (copy-paste):
+
+```typescript
+export type ParameterMap = Record<string, string | number>;
+
+export interface IQuestionParameter {
+  name: string;
+  possibleValues: string[];
+  type: 'number' | 'string';
+}
+
+export interface ILotItem {
+  _id?: string | ObjectId | string;
+  text: string;
+  explaination?: string;
+}
+
+export interface QuestionRenderView {
+  _id?: string | ObjectId | string;
+  text: string;
+  type: 'SELECT_ONE_IN_LOT' | 'SELECT_MANY_IN_LOT' | 'ORDER_THE_LOTS' | 'NUMERIC_ANSWER_TYPE' | 'DESCRIPTIVE';
+  isParameterized: boolean;
+  parameterMap?: ParameterMap | null;
+  parameters?: IQuestionParameter[];
+  hint?: string;
+  timeLimitSeconds: number;
+  points: number;
+  priority: 'LOW' | 'MEDIUM' | 'HIGH';
+  // Type-specific fields
+  lot?: ILotItem[]; // present for SELECT_* and ORDER_THE_LOTS
+}
+
+export interface CreateAttemptResponse {
+  attemptId: string;
+  userAttempts: number;
+  questionRenderViews: QuestionRenderView[];
+}
+```
+
 If you'd like, I can also add a compact JSON schema or Swagger example for `CreateAttemptResponse` to the API validator (`QuizValidator.ts`) so the generated OpenAPI doc includes the full example. Would you like that? 🔧
 
 Notes: The attempt has a server-side timer/limits (configured in quiz object); ability checks ensure student can start.
