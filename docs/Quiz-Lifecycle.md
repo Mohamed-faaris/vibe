@@ -192,11 +192,77 @@ These endpoints are core to runtime quiz delivery.
 - Auth: @Authorized()
 - Frontend: invoked by the quiz player; `hooks.ts` maps `api.useMutation('post','/quizzes/{quizId}/attempt')`.
 
-Sample response (abridged):
+Sample response (expanded):
+
+```json
 {
-"attemptId": "...",
-"questionRenderViews": [{"questionId":"...","text":"...","parameterMap":{...}}]
+  "attemptId": "60d21b4667d0d8992e610c99",
+  "userAttempts": 1,
+  "questionRenderViews": [
+    {
+      "_id": "60d21b4667d0d8992e610c02",
+      "text": "What is 2 + {{x}}?",
+      "type": "NUMERIC_ANSWER_TYPE",
+      "isParameterized": true,
+      "parameterMap": { "x": 2 },
+      "parameters": [
+        { "name": "x", "possibleValues": ["1", "2", "3"], "type": "number" }
+      ],
+      "hint": "Remember to add the numbers",
+      "timeLimitSeconds": 30,
+      "points": 5,
+      "priority": "MEDIUM"
+    },
+    {
+      "_id": "60d21b4667d0d8992e610c03",
+      "text": "Select the correct option:",
+      "type": "SELECT_ONE_IN_LOT",
+      "isParameterized": false,
+      "parameterMap": null,
+      "lot": [
+        { "_id": "lot1", "text": "3" },
+        { "_id": "lot2", "text": "4" }
+      ],
+      "timeLimitSeconds": 60,
+      "points": 2,
+      "priority": "LOW"
+    }
+  ]
 }
+```
+
+Fields explained:
+
+- `attemptId` (string): ID of the created attempt (server-generated).
+- `userAttempts` (number): The total number of attempts the user has made for this quiz (helps the UI show remaining attempts / attempt count).
+- `questionRenderViews` (array): The rendered question views for this attempt. Each element is a display-ready, parameterized question instance containing the following useful fields:
+  - `_id` (string | ObjectId): Question id.
+  - `text` (string): The question text after parameter tags are left (if parameterized the text may include tokens like `{{x}}` — the frontend renders these using `parameterMap`).
+  - `type` (QuestionType): One of `SELECT_ONE_IN_LOT`, `SELECT_MANY_IN_LOT`, `ORDER_THE_LOTS`, `NUMERIC_ANSWER_TYPE`, or `DESCRIPTIVE`.
+  - `isParameterized` (boolean): Whether this question uses parameters.
+  - `parameterMap` (object | null): A map of parameter names to generated values (ParameterMap = Record<string, string | number>). Example: `{ "x": 2 }`.
+  - `parameters` (array, optional): When `isParameterized` is true, an array of `IQuestionParameter` describing available parameters: `{ name: string, possibleValues: string[], type: 'number' | 'string' }`.
+  - `hint` (string, optional): Short hint text shown in the UI.
+  - `timeLimitSeconds` (number): Time limit for the question in seconds.
+  - `points` (number): Maximum points for this question.
+  - `priority` ("LOW" | "MEDIUM" | "HIGH"): Priority value for ordering or presentation.
+  - Type-specific fields (present only for some question types):
+    - `lot` (array of lot items) — for `SELECT_ONE_IN_LOT` / `SELECT_MANY_IN_LOT` / `ORDER_THE_LOTS` views. `ILotItem` shape: `{ _id?: string, text: string, explaination?: string }`.
+
+Notes & security considerations:
+
+- The attempt's `questionRenderViews` is a *rendered* view intended for the client. Sensitive solution data (correct answers / scoring logic internals) are not returned in these views — grading is performed server-side using the `parameterMap` and question definitions.
+- `parameterMap` values are deterministic for the attempt (used both to render the question and later to grade using the same parameter values).
+- The backend `AttemptService` returns `{ attemptId, questionRenderViews, userAttempts }` — the frontend should store `attemptId` so subsequent `save` / `submit` calls reference the same attempt.
+
+Type references (for implementers):
+
+- `ParameterMap` = `Record<string, string | number>` (see `backend/src/modules/quizzes/question-processing/tag-parser/tags/Tag.ts`).
+- `IQuestionParameter` = `{ name: string; possibleValues: string[]; type: 'number' | 'string' }` (see `backend/src/shared/interfaces/quiz.ts`).
+- `QuestionType` values: `SELECT_ONE_IN_LOT`, `SELECT_MANY_IN_LOT`, `ORDER_THE_LOTS`, `NUMERIC_ANSWER_TYPE`, `DESCRIPTIVE`.
+- `Priority` values: `LOW`, `MEDIUM`, `HIGH`.
+
+If you'd like, I can also add a compact JSON schema or Swagger example for `CreateAttemptResponse` to the API validator (`QuizValidator.ts`) so the generated OpenAPI doc includes the full example. Would you like that? 🔧
 
 Notes: The attempt has a server-side timer/limits (configured in quiz object); ability checks ensure student can start.
 
