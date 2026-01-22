@@ -264,7 +264,7 @@ class AttemptService extends BaseService {
   async attempt(
     userId: string | ObjectId,
     quizId: string,
-  ): Promise<{ attemptId: string; questionRenderViews: IQuestionRenderView[] }> {
+  ): Promise<{ attemptId: string; questionRenderViews: IQuestionRenderView[]; userAttempts: number }> {
     return this._withTransaction(async session => {
       //1. Check if UserQuizMetrics exists for the user and quiz
       let metrics = await this.userQuizMetricsRepository.get(
